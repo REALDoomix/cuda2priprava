@@ -179,41 +179,87 @@ while (true) {
     return 0;
 }*/
 
+#include <stdio.h>
+#include <cuda_device_runtime_api.h>
+#include <cuda_runtime.h>
+#include <opencv2/opencv.hpp>
+#include "uni_mem_allocator.h"
+#include "cuda_img.h"
+
+void cu_scale(CudaImg& src, CudaImg& dst);
+void cu_insert_image(CudaImg& big_img, CudaImg& small_img, int2 pos, uchar3 mask, bool is_and_mask);
+void cu_rotate90_rgba(CudaImg& src, CudaImg& dst, int direction);
+
 int main(int argc, char **argv) {
-    if (argc < 2) {
-        printf("Usage: %s dandelion.png\n", argv[0]);
+    UniformAllocator allocator;
+    cv::Mat::setDefaultAllocator(&allocator);
+
+    if (argc < 3) {
+        printf("Usage: %s background.jpg dandelion.png\n", argv[0]);
         return 1;
     }
 
-    cv::Mat dandelion = cv::imread(argv[1], cv::IMREAD_UNCHANGED); // Load with alpha channel
-    if (!dandelion.data) {
-        printf("Error loading dandelion image!\n");
+    cv::Mat background = cv::imread(argv[1], cv::IMREAD_COLOR);
+    cv::Mat dandelion = cv::imread(argv[2], cv::IMREAD_UNCHANGED); // Load with alpha channel
+
+    if (!background.data || !dandelion.data) {
+        printf("Error loading images!\n");
         return 1;
     }
 
+    CudaImg background_cuda(background);
     CudaImg dandelion_cuda(dandelion);
 
-    // Create images for rotated parts
-    cv::Mat rotated_part1(dandelion.cols, dandelion.rows, CV_8UC4);
-    cv::Mat rotated_part2(dandelion.cols, dandelion.rows, CV_8UC4);
-    CudaImg rotated_part1_cuda(rotated_part1);
-    CudaImg rotated_part2_cuda(rotated_part2);
+    srand(time(0)); // Seed for random number generation
 
-    // Rotate parts of the dandelion
-    cu_rotate90_rgba(dandelion_cuda, rotated_part1_cuda, 1);  // +90 degrees
-    cu_rotate90_rgba(dandelion_cuda, rotated_part2_cuda, -1); // -90 degrees
+    while (true) {
+        // Generate random height for the dandelion
+        int random_height = rand() % 201 + 100; // Random height in range [100, 300]
+        int random_width = (random_height * dandelion.cols) / dandelion.rows; // Maintain aspect ratio
 
-    // Create a new image to combine the rotated parts
-    cv::Mat combined_image(dandelion.rows * 2, dandelion.cols, CV_8UC4);
-    CudaImg combined_image_cuda(combined_image);
+        // Resize dandelion
+        cv::Mat resized_dandelion(random_height, random_width, CV_8UC4);
+        CudaImg resized_dandelion_cuda(resized_dandelion);
+        cu_scale(dandelion_cuda, resized_dandelion_cuda);
 
-    // Insert rotated parts into the combined image
-    cu_insert_image(combined_image_cuda, rotated_part1_cuda, {0, 0}, {1, 1, 1}, false);
-    cu_insert_image(combined_image_cuda, rotated_part2_cuda, {0, dandelion.rows}, {1, 1, 1}, false);
+        // Generate random position
+        int x_pos = rand() % (background.cols - random_width);
+        int y_pos = rand() % (background.rows - random_height);
 
-    // Copy the combined image back to the host for display
-    cv::imshow("Combined Dandelion", combined_image);
-    cv::waitKey(0);
+        // Insert resized dandelion into the background
+        cu_insert_image(background_cuda, resized_dandelion_cuda, {x_pos, y_pos}, {1, 1, 1}, false);
+
+        // Overlay text above the dandelion
+        std::string text = "Position: (" + std::to_string(x_pos) + ", " + std::to_string(y_pos) + ")";
+        cv::putText(background, text, cv::Point(x_pos, y_pos - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 1);
+
+        // Display the result
+        cv::imshow("Dandelions in Nature", background);
+
+        // Rotate the dandelion parts
+        cv::Mat rotated_part1(dandelion.cols, dandelion.rows, CV_8UC4); // +90 degrees
+        cv::Mat rotated_part2(dandelion.cols, dandelion.rows, CV_8UC4); // -90 degrees
+        CudaImg rotated_part1_cuda(rotated_part1);
+        CudaImg rotated_part2_cuda(rotated_part2);
+
+        cu_rotate90_rgba(dandelion_cuda, rotated_part1_cuda, 1);  // Rotate +90 degrees
+        cu_rotate90_rgba(dandelion_cuda, rotated_part2_cuda, -1); // Rotate -90 degrees
+
+        // Create a new image to combine the rotated parts
+        cv::Mat combined_image(dandelion.rows * 2, dandelion.cols, CV_8UC4);
+        CudaImg combined_image_cuda(combined_image);
+
+        // Insert rotated parts into the combined image
+        cu_insert_image(combined_image_cuda, rotated_part1_cuda, {0, 0}, {1, 1, 1}, false);
+        cu_insert_image(combined_image_cuda, rotated_part2_cuda, {0, dandelion.rows}, {1, 1, 1}, false);
+
+        // Display the combined dandelion
+        cv::imshow("Combined Dandelion", combined_image);
+
+        // Wait for key press
+        char key = cv::waitKey(0);
+        if (key == 'q') break;
+    }
 
     return 0;
 }
