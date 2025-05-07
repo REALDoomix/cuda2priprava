@@ -28,7 +28,7 @@ int main(int argc, char **argv)
     UniformAllocator allocator;
     cv::Mat::setDefaultAllocator(&allocator);
 
-    if (argc < 4) {
+    /*if (argc < 4) {
         printf("Použití: %s obrazek1.jpg obrazek2.jpg obrazek3.jpg\n", argv[0]);
         return 1;
     }
@@ -83,6 +83,54 @@ int main(int argc, char **argv)
     cu_insert_mask(img3_cuda, small_cuda, pos2, {1, 0, 0}, false);      // jen červená
     cu_insert_mask(img3_cuda, small_cuda, pos3, {0, 1, 0}, false);      // jen zelená
     cu_insert_mask(img3_cuda, small_cuda, pos4, {0, 0, 1}, false);      // jen modrá
+*/
+
+if (argc < 3) {
+    printf("Usage: %s background.jpg dandelion.png\n", argv[0]);
+    return 1;
+}
+
+cv::Mat background = cv::imread(argv[1], cv::IMREAD_COLOR);
+cv::Mat dandelion = cv::imread(argv[2], cv::IMREAD_UNCHANGED); // Load with alpha channel
+
+if (!background.data || !dandelion.data) {
+    printf("Error loading images!\n");
+    return 1;
+}
+
+CudaImg background_cuda(background);
+CudaImg dandelion_cuda(dandelion);
+
+srand(time(0)); // Seed for random number generation
+
+while (true) {
+    // Generate random height for the dandelion
+    int random_height = rand() % 201 + 100; // Random height in range [100, 300]
+    int random_width = (random_height * dandelion.cols) / dandelion.rows; // Maintain aspect ratio
+
+    // Resize dandelion
+    cv::Mat resized_dandelion(random_height, random_width, CV_8UC4);
+    CudaImg resized_dandelion_cuda(resized_dandelion);
+    cu_scale(dandelion_cuda, resized_dandelion_cuda);
+
+    // Generate random position
+    int x_pos = rand() % (background.cols - random_width);
+    int y_pos = rand() % (background.rows - random_height);
+
+    // Insert resized dandelion into the background
+    cu_insert_image(background_cuda, resized_dandelion_cuda, {x_pos, y_pos}, {1, 1, 1}, false);
+
+    // Overlay text above the dandelion
+    std::string text = "Position: (" + std::to_string(x_pos) + ", " + std::to_string(y_pos) + ")";
+    cv::putText(background, text, cv::Point(x_pos, y_pos - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 1);
+
+    // Display the result
+    cv::imshow("Dandelions in Nature", background);
+
+    // Wait for key press
+    char key = cv::waitKey(0);
+    if (key == 'q') break;
+}
 
     // Rotate img1 by 90 degrees clockwise
     cv::Mat rotated_img(img1.cols, img1.rows, CV_8UC3); // Swapped dimensions
