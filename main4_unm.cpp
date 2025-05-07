@@ -23,7 +23,7 @@
 void cu_swap_image(CudaImg& img1, CudaImg& img2, int2 pos);
 void cu_insert_mask(CudaImg& big, CudaImg& small, int2 pos, uchar3 mask, bool is_and_mask);
 
-int main(int argc, char **argv)
+/*int main(int argc, char **argv)
 {
     UniformAllocator allocator;
     cv::Mat::setDefaultAllocator(&allocator);
@@ -83,7 +83,7 @@ int main(int argc, char **argv)
     cu_insert_mask(img3_cuda, small_cuda, pos2, {1, 0, 0}, false);      // jen červená
     cu_insert_mask(img3_cuda, small_cuda, pos3, {0, 1, 0}, false);      // jen zelená
     cu_insert_mask(img3_cuda, small_cuda, pos4, {0, 0, 1}, false);      // jen modrá
-*/
+
 
 if (argc < 3) {
     printf("Usage: %s background.jpg dandelion.png\n", argv[0]);
@@ -176,6 +176,45 @@ while (true) {
     cv::imshow("Obrazek 3 s maskovanym vkladem", img3);
 
     cv::waitKey(0);
+    return 0;
+}*/
+
+int main(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Usage: %s dandelion.png\n", argv[0]);
+        return 1;
+    }
+
+    cv::Mat dandelion = cv::imread(argv[1], cv::IMREAD_UNCHANGED); // Load with alpha channel
+    if (!dandelion.data) {
+        printf("Error loading dandelion image!\n");
+        return 1;
+    }
+
+    CudaImg dandelion_cuda(dandelion);
+
+    // Create images for rotated parts
+    cv::Mat rotated_part1(dandelion.cols, dandelion.rows, CV_8UC4);
+    cv::Mat rotated_part2(dandelion.cols, dandelion.rows, CV_8UC4);
+    CudaImg rotated_part1_cuda(rotated_part1);
+    CudaImg rotated_part2_cuda(rotated_part2);
+
+    // Rotate parts of the dandelion
+    cu_rotate90_rgba(dandelion_cuda, rotated_part1_cuda, 1);  // +90 degrees
+    cu_rotate90_rgba(dandelion_cuda, rotated_part2_cuda, -1); // -90 degrees
+
+    // Create a new image to combine the rotated parts
+    cv::Mat combined_image(dandelion.rows * 2, dandelion.cols, CV_8UC4);
+    CudaImg combined_image_cuda(combined_image);
+
+    // Insert rotated parts into the combined image
+    cu_insert_image(combined_image_cuda, rotated_part1_cuda, {0, 0}, {1, 1, 1}, false);
+    cu_insert_image(combined_image_cuda, rotated_part2_cuda, {0, dandelion.rows}, {1, 1, 1}, false);
+
+    // Copy the combined image back to the host for display
+    cv::imshow("Combined Dandelion", combined_image);
+    cv::waitKey(0);
+
     return 0;
 }
 
