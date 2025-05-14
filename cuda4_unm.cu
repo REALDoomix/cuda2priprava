@@ -12,6 +12,8 @@
 #include <cuda_device_runtime_api.h>
 #include <cuda_runtime.h>
 
+#include "font8x8.h"
+
 #include "cuda_img.h"
 
 __constant__ uint8_t d_font8x8[256][8]; // Konstantní paměť pro font
@@ -81,6 +83,49 @@ void cu_insert_image(CudaImg& big_img, CudaImg& small_img, int2 pos, uchar3 mask
               (small_img.m_size.y + block.y - 1) / block.y);
 
     kernel_insert_image<<<grid, block>>>(big_img, small_img, pos, mask, is_and_mask);
+    cudaDeviceSynchronize();
+}
+
+__global__ void kernel_insertimage( CudaImg t_big_cuda_pic, CudaImg t_small_cuda_pic, int2 t_position )
+{
+    // X,Y coordinates and check image dimensions
+    int l_y = blockDim.y * blockIdx.y + threadIdx.y;
+    int l_x = blockDim.x * blockIdx.x + threadIdx.x;
+    if ( l_y >= t_small_cuda_pic.m_size.y ) return;
+    if ( l_x >= t_small_cuda_pic.m_size.x ) return;
+    int l_by = l_y + t_position.y;
+    int l_bx = l_x + t_position.x;
+    if ( l_by >= t_big_cuda_pic.m_size.y || l_by < 0 ) return;
+    if ( l_bx >= t_big_cuda_pic.m_size.x || l_bx < 0 ) return;
+
+    // Get point from small image
+    uchar4 l_fg_bgra = t_small_cuda_pic.m_p_uchar4[ l_y * t_small_cuda_pic.m_size.x + l_x ];
+    uchar3 l_bg_bgr = t_big_cuda_pic.m_p_uchar3[ l_by * t_big_cuda_pic.m_size.x + l_bx ];
+    uchar3 l_bgr = { 0, 0, 0 };
+
+    // compose point from small and big image according alpha channel
+    l_bgr.x = l_fg_bgra.x * l_fg_bgra.w / 255 + l_bg_bgr.x * ( 255 - l_fg_bgra.w ) / 255;
+    l_bgr.y = l_fg_bgra.y * l_fg_bgra.w / 255 + l_bg_bgr.y * ( 255 - l_fg_bgra.w ) / 255;
+    l_bgr.z = l_fg_bgra.z * l_fg_bgra.w / 255 + l_bg_bgr.z * ( 255 - l_fg_bgra.w ) / 255;
+
+    // Store point into image
+    t_big_cuda_pic.m_p_uchar3[ l_by * t_big_cuda_pic.m_size.x + l_bx ] = l_bgr;
+}
+
+void cu_insertimage( CudaImg t_big_cuda_pic, CudaImg t_small_cuda_pic, int2 t_position )
+{
+    cudaError_t l_cerr;
+
+    // Grid creation, size of grid must be equal or greater than images
+    int l_block_size = 32;
+    dim3 l_blocks( ( t_small_cuda_pic.m_size.x + l_block_size - 1 ) / l_block_size,
+                   ( t_small_cuda_pic.m_size.y + l_block_size - 1 ) / l_block_size );
+    dim3 l_threads( l_block_size, l_block_size );
+    kernel_insertimage<<< l_blocks, l_threads >>>( t_big_cuda_pic, t_small_cuda_pic, t_position );
+
+    if ( ( l_cerr = cudaGetLastError() ) != cudaSuccess )
+        printf( "CUDA Error [%d] - '%s'\n", __LINE__, cudaGetErrorString( l_cerr ) );
+
     cudaDeviceSynchronize();
 }
 
@@ -313,6 +358,37 @@ __global__ void kernel_draw_char(CudaImg img, int x, int y, char c, uchar3 color
         }
     }
 }
+
+__global__ void kernel_rotate90_rgba(CudaImg src, CudaImg dst, int direction) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x >= src.m_size.x || y >= src.m_size.y) return;
+
+    int new_x, new_y;
+
+    if (direction == 1) { // 90 degrees clockwise
+        new_x = src.m_size.y - 1 - y;
+        new_y = x;
+    } else if (direction == -1) { // 90 degrees counterclockwise
+        new_x = y;
+        new_y = src.m_size.x - 1 - x;
+    } else {
+        return;
+    }
+
+    dst.at4(new_y, new_x) = src.at4(y, x);
+}
+
+void cu_rotate90_rgba(CudaImg& src, CudaImg& dst, int direction) {
+    dim3 block(16, 16);
+    dim3 grid((src.m_size.x + block.x - 1) / block.x,
+              (src.m_size.y + block.y - 1) / block.y);
+
+    kernel_rotate90_rgba<<<grid, block>>>(src, dst, direction);
+    cudaDeviceSynchronize();
+}
+
 
 void cu_draw_char(CudaImg& img, int x, int y, char c, uchar3 color) {
     dim3 block_size(8, 8); // Velikost bloku odpovídá velikosti znaku (8x8)
